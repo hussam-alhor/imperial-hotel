@@ -1,0 +1,20 @@
+const mongoose = require("mongoose");
+const seedAdmin = require("../helpers/seedAdmin");
+
+// MONGO_URI_LOCAL
+const connectDB = async () => {
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI_LOCAL);
+
+    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    
+    // create admin
+    await seedAdmin();
+
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1); 
+  }
+};
+
+module.exports = connectDB;

@@ -43,10 +43,16 @@ userSchema.methods.generateAuthToken = function(){
  return jwt.sign({id : this._id , role : this.role} , process.env.JWT_SECRET)
 }
 
+// Virtual for isAdmin
+userSchema.virtual('isAdmin').get(function() {
+    return this.role === 'Admin';
+});
+
 // Pre-save hook to hash password before saving
 userSchema.pre('save', async function () {
-    if (!this.isModified('password')) return;
-    this.password = await argon2.hash(this.password);
+    if (this.password && !this.password.startsWith('$')) {
+        this.password = await argon2.hash(this.password);
+    }
 });
 
 // user model

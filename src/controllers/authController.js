@@ -28,6 +28,7 @@ module.exports.loginUserCtrl = expressAsyncHandler(async(req,res)=>{
         isAdmin : user.isAdmin,
         userName: user.userName,
         email: user.email,
+        role: user.role,
         token
     })
 })

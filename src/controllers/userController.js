@@ -58,24 +58,28 @@ module.exports.updateEmployeeCtrl = expressAsyncHandler(async (req, res) => {
         return res.status(400).json({ message: error.details[0].message });
     }
 
-    // 2. تحديث بيانات الموظف
-    const updatedEmployee = await User.findByIdAndUpdate(
-        req.params.id,
-        {
-            $set: {
-                // ملاحظة: تأكد من تطابق userName مع ما هو موجود في الـ Schema
-                userName: req.body.userName, 
-                password: req.body.password,
-            },
-        },
-        { new: true }
-    ).select("-password");
-
-    if (!updatedEmployee) {
+    // 2. البحث عن الموظف
+    const employee = await User.findById(req.params.id);
+    if (!employee) {
         return res.status(404).json({ message: "Employee not found" });
     }
 
-    res.status(200).json(updatedEmployee);
+    // 3. تحديث البيانات
+    employee.userName = req.body.userName;
+    if (req.body.password) {
+        employee.password = req.body.password; // سيتم hashing تلقائياً بسبب pre-save hook
+    }
+
+    // 4. حفظ التغييرات
+    await employee.save();
+
+    // 5. إرسال الرد بدون كلمة المرور
+    res.status(200).json({
+        id: employee._id,
+        userName: employee.userName,
+        email: employee.email,
+        role: employee.role,
+    });
 });
 
 /**

@@ -38,10 +38,8 @@ app.use("/api/invoices", require("./src/routes/invoiceRoutes"));
 app.use("/api/maintenances", require("./src/routes/maintenanceRoutes"));
 app.use("/api/cleaning-schedules", require("./src/routes/cleaningScheduleRoutes"));
 app.use("/api/room-service-requests", require("./src/routes/roomServiceRequestRoutes"));
-// app.use("/api/levels", require("./src/routes/levelRoutes")); 
-// app.use("/api/tests", require("./src/routes/testRoutes")); 
-
-
+app.use("/api/dashboard", require("./src/routes/dashboardRoutes"));
+app.use("/api/dashboard/admin", require("./src/routes/adminDashboardRoutes"));
 
 
 // error handler

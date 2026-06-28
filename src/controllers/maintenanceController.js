@@ -29,8 +29,12 @@ module.exports.createMaintenanceCtrl = expressAsyncHandler(async (req, res) => {
     const maintenance = await Maintenance.create(req.body);
 
     // 4. Update room status to 'تحت الصيانة' if in progress
+    // ملاحظة: واجهة الصيانة ترسل قيم status مثل: in_progress / completed
+    // لذلك نحدث حالة الغرفة بناءً على status المطلوب.
     if (req.body.status === 'in_progress') {
         await Room.findByIdAndUpdate(req.body.room, { status: 'تحت الصيانة' });
+    } else if (req.body.status === 'completed') {
+        await Room.findByIdAndUpdate(req.body.room, { status: 'متاحة' });
     }
 
     // 5. Send response

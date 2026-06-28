@@ -17,23 +17,25 @@ module.exports.verifyToken = (req, res , next)=> {
 }
 
 // verify Token and only admin
-module.exports.verifyTokenAndOnlyAdmin = (req,res,next)=> {
-    this.verifyToken(req,res , ()=>{
-        if(req.user.role === "Admin"){
-            next()
-        }else{
-            return res.status(403).json({message:"Not allowed , only admin"})
-        }
-    })
-}
+module.exports.verifyTokenAndOnlyAdmin = (req, res, next) => {
+  module.exports.verifyToken(req, res, () => {
+    if (req.user.role === "Admin") {
+      next();
+    } else {
+      return res.status(403).json({ message: "Not allowed , only admin" });
+    }
+  });
+};
 
 // verify Token and only employee or admin
-module.exports.verifyTokenAndEmployee = (req,res,next)=> {
-    this.verifyToken(req,res , ()=>{
-        if(req.user.role === "Employee" || req.user.role === "Admin"){
-            next()
-        }else{
-            return res.status(403).json({message:"Not allowed , only employee or admin"})
-        }
-    })
-}
+module.exports.verifyTokenAndEmployee = (req, res, next) => {
+  module.exports.verifyToken(req, res, () => {
+    if (req.user.role === "Employee" || req.user.role === "Admin") {
+      next();
+    } else {
+      return res
+        .status(403)
+        .json({ message: "Not allowed , only employee or admin" });
+    }
+  });
+};

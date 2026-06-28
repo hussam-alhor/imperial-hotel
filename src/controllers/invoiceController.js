@@ -1,11 +1,13 @@
+
 const expressAsyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 const { Invoice, validationCreateInvoice, validationUpdateInvoice } = require("../models/Invoice");
 const { Booking } = require("../models/Booking");
 const { Room } = require("../models/Room");
 
 /**
  * @route   POST /api/invoices
- * @desc    Create a new invoice
+ * @desc    Create a new invoice with payments
  * @access  Private (Employee or Admin)
  */
 module.exports.createInvoiceCtrl = expressAsyncHandler(async (req, res) => {
@@ -20,7 +22,7 @@ module.exports.createInvoiceCtrl = expressAsyncHandler(async (req, res) => {
         }
     });
 
-    // 2. Validate input (without totalAmount if not provided)
+    // 2. Validate input
     const { error } = validationCreateInvoice(req.body);
     if (error) {
         return res.status(400).json({ message: error.details[0].message });
@@ -32,40 +34,37 @@ module.exports.createInvoiceCtrl = expressAsyncHandler(async (req, res) => {
         return res.status(404).json({ message: "Booking not found" });
     }
 
-    // 4. Set customer and room from booking if not provided
-    const customer = req.body.customer || booking.customer._id.toString();
-    const room = req.body.room || booking.room._id.toString();
-
-    // 4. Calculate totalAmount if not provided
-    let totalAmount = req.body.totalAmount;
-    if (!totalAmount) {
-        const baseAmount = booking.nights * booking.room.pricePerNight;
-        const additionalChargesSum = (req.body.additionalCharges || []).reduce((sum, charge) => sum + charge.amount, 0);
-        const discountsSum = (req.body.discounts || []).reduce((sum, discount) => sum + discount.amount, 0);
-        totalAmount = baseAmount + additionalChargesSum - discountsSum;
-    }
-
-    // 5. Calculate remainingAmount
-    const paidAmount = req.body.paidAmount || 0;
+    // 4. Calculate Amounts
+    const baseAmount = booking.nights * booking.room.pricePerNight;
+    const additionalChargesSum = (req.body.additionalCharges || []).reduce((sum, charge) => sum + charge.amount, 0);
+    const discountsSum = (req.body.discounts || []).reduce((sum, discount) => sum + discount.amount, 0);
+    
+    const totalAmount = baseAmount + additionalChargesSum - discountsSum;
+    const paidAmount = Number(req.body.paidAmount) || 0;
     const remainingAmount = totalAmount - paidAmount;
 
-    // 6. Generate invoice number
-    const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 });
-    const invoiceNumber = lastInvoice ? `INV${parseInt(lastInvoice.invoiceNumber.slice(3)) + 1}` : 'INV1';
+    // 5. Generate unique invoice number
+    const uniqueSuffix = booking._id.toString().slice(-4).toUpperCase();
+    const invoiceNumber = `INV-${uniqueSuffix}-${Date.now()}`;
 
-    // 7. Create invoice
+    // 6. Create invoice object with structured payment record
     const invoiceData = {
         ...req.body,
-        customer,
-        room,
+        customer: req.body.customer || booking.customer._id,
+        room: req.body.room || booking.room._id,
         totalAmount,
         remainingAmount,
         paidAmount,
-        invoiceNumber
+        invoiceNumber,
+        payments: req.body.payments || [{ 
+            amount: paidAmount, 
+            method: req.body.paymentMethod || 'كاش', 
+            date: new Date() 
+        }]
     };
+
     const invoice = await Invoice.create(invoiceData);
 
-    // 8. Send response
     res.status(201).json({
         id: invoice._id,
         invoiceNumber: invoice.invoiceNumber,
@@ -102,7 +101,7 @@ module.exports.getInvoiceByIdCtrl = expressAsyncHandler(async (req, res) => {
 
 /**
  * @route   PUT /api/invoices/:id
- * @desc    Update invoice
+ * @desc    Update invoice (and recalculate amounts)
  * @access  Private (Employee or Admin)
  */
 module.exports.updateInvoiceCtrl = expressAsyncHandler(async (req, res) => {
@@ -123,50 +122,85 @@ module.exports.updateInvoiceCtrl = expressAsyncHandler(async (req, res) => {
         return res.status(400).json({ message: error.details[0].message });
     }
 
-    // 3. Update invoice
+    // 3. Find existing invoice to recalculate logic
+    const existingInvoice = await Invoice.findById(req.params.id).populate({
+        path: 'booking',
+        populate: { path: 'room' }
+    });
+
+    if (!existingInvoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+    }
+
+    // 4. Merge old data with new data to recalculate amounts
+    const updatedAdditionalCharges = req.body.additionalCharges || existingInvoice.additionalCharges || [];
+    const updatedDiscounts = req.body.discounts || existingInvoice.discounts || [];
+    const updatedPaidAmount = req.body.paidAmount !== undefined ? req.body.paidAmount : existingInvoice.paidAmount;
+
+    // 5. Recalculate
+    const baseAmount = existingInvoice.booking.nights * existingInvoice.booking.room.pricePerNight;
+    const additionalChargesSum = updatedAdditionalCharges.reduce((sum, charge) => sum + charge.amount, 0);
+    const discountsSum = updatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
+
+    const newTotalAmount = baseAmount + additionalChargesSum - discountsSum;
+    const newRemainingAmount = newTotalAmount - updatedPaidAmount;
+
+    // 6. Update invoice
     const updatedInvoice = await Invoice.findByIdAndUpdate(
         req.params.id,
-        { $set: req.body },
+        { 
+            $set: {
+                ...req.body,
+                totalAmount: newTotalAmount,
+                paidAmount: updatedPaidAmount,
+                remainingAmount: newRemainingAmount
+            }
+        },
         { new: true }
     ).populate('booking').populate('customer').populate('room');
 
-    if (!updatedInvoice) {
-        return res.status(404).json({ message: "Invoice not found" });
-    }
-
     res.status(200).json(updatedInvoice);
 });
-
 /**
  * @route   POST /api/invoices/:id/checkout
- * @desc    Checkout and finalize invoice
+ * @desc    Checkout and finalize invoice with state management
  * @access  Private (Employee or Admin)
  */
 module.exports.checkoutCtrl = expressAsyncHandler(async (req, res) => {
-    // 1. Find invoice with booking and room
-    const invoice = await Invoice.findById(req.params.id).populate('booking').populate('room');
-    if (!invoice) {
-        return res.status(404).json({ message: "Invoice not found" });
+    const invoiceId = req.params.id;
+    const invoice = await Invoice.findById(invoiceId).populate('booking');
+
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+    
+    // منع الخروج إذا كان هناك مبلغ متبقي
+    if (invoice.remainingAmount > 0) {
+        return res.status(400).json({ message: "يوجد مبلغ متبقي يجب سداده قبل إتمام عملية الـ Checkout" });
     }
 
-    if (!invoice.booking) {
-        return res.status(400).json({ message: "Invoice is not linked to a booking" });
+    const roomId = invoice.booking.room;
+    const session = await mongoose.startSession();
+    
+    try {
+        await session.withTransaction(async () => {
+            // 1. تحديث الحجز
+            await Booking.findByIdAndUpdate(invoice.booking._id, { status: 'completed' }, { session });
+            // 2. إخلاء الغرفة (التغيير إلى متاحة)
+            await Room.findByIdAndUpdate(roomId, { status: 'متاحة' }, { session });
+            // 3. تحديث الفاتورة
+            await Invoice.findByIdAndUpdate(invoiceId, { status: 'paid' }, { session });
+        });
+
+        res.status(200).json({ message: "تمت عملية الـ Checkout بنجاح وتحديث حالة الغرفة" });
+    } catch (error) {
+        console.warn("Transaction failed, falling back to sequential execution:", error.message);
+        
+        // تنفيذ يدوي في حالة البيئة المحلية (Standalone DB)
+        await Booking.findByIdAndUpdate(invoice.booking._id, { status: 'completed' });
+        await Room.findByIdAndUpdate(roomId, { status: 'متاحة' });
+        await Invoice.findByIdAndUpdate(invoiceId, { status: 'paid' });
+        
+        res.status(200).json({ message: "تمت العملية بنجاح (وضع التوافق المحلي)" });
+    } finally {
+        session.endSession();
     }
-
-    const roomId = invoice.room ? invoice.room._id : invoice.booking.room;
-
-    // 2. Update booking status to completed
-    await Booking.findByIdAndUpdate(invoice.booking._id, { status: 'completed' });
-
-    // 3. Always free the room after checkout, since the booking is completed
-    await Room.findByIdAndUpdate(roomId, { status: 'متاحة' });
-
-    // 4. Update invoice status to paid
-    await Invoice.findByIdAndUpdate(req.params.id, { status: 'paid' });
-
-    // 5. Send response
-    res.status(200).json({
-        message: "Checkout completed successfully. Invoice finalized.",
-        invoice: invoice,
-    });
 });

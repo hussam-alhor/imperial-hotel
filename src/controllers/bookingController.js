@@ -9,68 +9,52 @@ const { Room } = require("../models/Room");
  * @access  Private (Employee or Admin)
  */
 module.exports.createBookingCtrl = expressAsyncHandler(async (req, res) => {
-    // 1. Parse specialRequests if it's a string
+    // 1. Parse specialRequests
     if (req.body.specialRequests && typeof req.body.specialRequests === 'string') {
-        try {
-            req.body.specialRequests = JSON.parse(req.body.specialRequests);
-        } catch (e) {
-            return res.status(400).json({ message: "Invalid specialRequests format" });
-        }
+        try { req.body.specialRequests = JSON.parse(req.body.specialRequests); } 
+        catch (e) { return res.status(400).json({ message: "Invalid specialRequests format" }); }
     }
 
     // 2. Validate input
     const { error } = validationCreateBooking(req.body);
-    if (error) {
-        return res.status(400).json({ message: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ message: error.details[0].message });
 
-    // 3. Check if customer exists
+    // 3. التحقق من التواريخ (منطق إضافي)
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const checkIn = new Date(req.body.checkInDate);
+    const checkOut = new Date(req.body.checkOutDate);
+
+    if (checkIn < now) return res.status(400).json({ message: "تاريخ الدخول لا يمكن أن يكون في الماضي" });
+    if (checkOut <= checkIn) return res.status(400).json({ message: "تاريخ الخروج يجب أن يكون بعد تاريخ الدخول" });
+
+    // 4. Check if customer exists
     const customer = await Customer.findById(req.body.customer);
-    if (!customer) {
-        return res.status(404).json({ message: "Customer not found" });
-    }
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    // 4. Check if room exists and is available
+    // 5. Check if room exists and is available
     const room = await Room.findById(req.body.room);
-    if (!room) {
-        return res.status(404).json({ message: "Room not found" });
-    }
-    if (room.status !== 'متاحة') {
-        return res.status(400).json({ message: "Room is not available" });
-    }
+    if (!room) return res.status(404).json({ message: "Room not found" });
+    if (room.status !== 'متاحة') return res.status(400).json({ message: "Room is not available" });
 
-    // 5. Check for overlapping bookings
+    // 6. Check for overlapping bookings
     const overlappingBooking = await Booking.findOne({
         room: req.body.room,
         status: 'active',
         $or: [
-            { checkInDate: { $lt: new Date(req.body.checkOutDate), $gte: new Date(req.body.checkInDate) } },
-            { checkOutDate: { $gt: new Date(req.body.checkInDate), $lte: new Date(req.body.checkOutDate) } }
+            { checkInDate: { $lt: req.body.checkOutDate, $gte: req.body.checkInDate } },
+            { checkOutDate: { $gt: req.body.checkInDate, $lte: req.body.checkOutDate } }
         ]
     });
-    if (overlappingBooking) {
-        return res.status(400).json({ message: "Room is already booked for the selected dates" });
-    }
+    if (overlappingBooking) return res.status(400).json({ message: "Room is already booked for the selected dates" });
 
-    // 6. Create booking
+    // 7. Create booking
     const booking = await Booking.create(req.body);
 
-    // 7. Update room status to 'محجوز'
+    // 8. Update room status to 'محجوز'
     await Room.findByIdAndUpdate(req.body.room, { status: 'محجوز' });
 
-    // 8. Send response
-    res.status(201).json({
-        id: booking._id,
-        customer: booking.customer,
-        room: booking.room,
-        checkInDate: booking.checkInDate,
-        checkOutDate: booking.checkOutDate,
-        nights: booking.nights,
-        initialPayment: booking.initialPayment,
-        specialRequests: booking.specialRequests,
-        status: booking.status,
-        message: "Booking created successfully.",
-    });
+    res.status(201).json({ id: booking._id, message: "Booking created successfully.", booking });
 });
 
 /**
@@ -102,42 +86,47 @@ module.exports.getBookingByIdCtrl = expressAsyncHandler(async (req, res) => {
  * @access  Private (Employee or Admin)
  */
 module.exports.updateBookingCtrl = expressAsyncHandler(async (req, res) => {
-    // 1. Parse specialRequests if it's a string
+    // 1. Parse specialRequests
     if (req.body.specialRequests && typeof req.body.specialRequests === 'string') {
-        try {
-            req.body.specialRequests = JSON.parse(req.body.specialRequests);
-        } catch (e) {
-            return res.status(400).json({ message: "Invalid specialRequests format" });
-        }
+        try { req.body.specialRequests = JSON.parse(req.body.specialRequests); } 
+        catch (e) { return res.status(400).json({ message: "Invalid specialRequests format" }); }
     }
 
     // 2. Validate input
     const { error } = validationUpdateBooking(req.body);
-    if (error) {
-        return res.status(400).json({ message: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ message: error.details[0].message });
 
     // 3. Find existing booking
     const existingBooking = await Booking.findById(req.params.id);
-    if (!existingBooking) {
-        return res.status(404).json({ message: "Booking not found" });
-    }
+    if (!existingBooking) return res.status(404).json({ message: "Booking not found" });
 
-    // 4. If room is changing, check availability
+    // 4. إذا تم تغيير الغرفة: التأكد من توفر الغرفة الجديدة وتبديل الحالات
     if (req.body.room && req.body.room !== existingBooking.room.toString()) {
         const newRoom = await Room.findById(req.body.room);
         if (!newRoom || newRoom.status !== 'متاحة') {
             return res.status(400).json({ message: "New room is not available" });
         }
-        // Update old room status to available if it was booked
-        if (existingBooking.status === 'active') {
-            await Room.findByIdAndUpdate(existingBooking.room, { status: 'متاحة' });
-        }
-        // Update new room status
+        // إتاحة الغرفة القديمة
+        await Room.findByIdAndUpdate(existingBooking.room, { status: 'متاحة' });
+        // حجز الغرفة الجديدة
         await Room.findByIdAndUpdate(req.body.room, { status: 'محجوز' });
     }
 
-    // 5. Update booking
+    // 5. التحقق من التداخل في التواريخ الجديدة (إذا تم تغيير التواريخ)
+    if (req.body.checkInDate || req.body.checkOutDate) {
+        const overlappingBooking = await Booking.findOne({
+            _id: { $ne: req.params.id }, // استثناء الحجز الحالي نفسه
+            room: req.body.room || existingBooking.room,
+            status: 'active',
+            $or: [
+                { checkInDate: { $lt: req.body.checkOutDate || existingBooking.checkOutDate, $gte: req.body.checkInDate || existingBooking.checkInDate } },
+                { checkOutDate: { $gt: req.body.checkInDate || existingBooking.checkInDate, $lte: req.body.checkOutDate || existingBooking.checkOutDate } }
+            ]
+        });
+        if (overlappingBooking) return res.status(400).json({ message: "Room is already booked for these new dates" });
+    }
+
+    // 6. Update booking
     const updatedBooking = await Booking.findByIdAndUpdate(
         req.params.id,
         { $set: req.body },

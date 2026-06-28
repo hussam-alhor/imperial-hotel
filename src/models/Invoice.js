@@ -65,27 +65,30 @@ const invoiceSchema = new mongoose.Schema({
 const validationCreateInvoice = (obj) => {
     const schema = joi.object({
         booking: joi.string().required(),
-        customer: joi.string(),  // Optional, will be taken from booking
-        room: joi.string(),      // Optional, will be taken from booking
-        totalAmount: joi.number().min(0),  // Optional, will be calculated if not provided
+        customer: joi.string(),
+        room: joi.string(),
+        totalAmount: joi.number().min(0),
         paidAmount: joi.number().min(0),
         remainingAmount: joi.number().min(0),
         payments: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             amount: joi.number().required(),
             method: joi.string().valid('كاش', 'بطاقة ائتمان', 'دفع إلكتروني', 'أخرى').required(),
             date: joi.date(),
         })),
         discounts: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             description: joi.string().trim(),
             amount: joi.number().min(0),
         })),
         additionalCharges: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             description: joi.string().trim(),
             amount: joi.number().min(0),
         })),
         status: joi.string().valid('pending', 'paid', 'partially_paid'),
-        invoiceNumber: joi.string(),  // Will be generated
-    });
+        invoiceNumber: joi.string(),
+    }).unknown(true); // السماح بأي حقول أخرى غير معرفة
     return schema.validate(obj);
 };
 
@@ -95,20 +98,23 @@ const validationUpdateInvoice = (obj) => {
         paidAmount: joi.number().min(0),
         remainingAmount: joi.number().min(0),
         payments: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             amount: joi.number().required(),
             method: joi.string().valid('كاش', 'بطاقة ائتمان', 'دفع إلكتروني', 'أخرى').required(),
             date: joi.date(),
         })),
         discounts: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             description: joi.string().trim(),
             amount: joi.number().min(0),
         })),
         additionalCharges: joi.array().items(joi.object({
+            _id: joi.any(), // السماح بالـ _id
             description: joi.string().trim(),
             amount: joi.number().min(0),
         })),
         status: joi.string().valid('pending', 'paid', 'partially_paid'),
-    });
+    }).unknown(true); // السماح بأي حقول أخرى غير معرفة
     return schema.validate(obj);
 };
 
